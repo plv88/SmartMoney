@@ -35,21 +35,22 @@ class Klines:
 class DataHandler:
     BASE_URL = "https://api.binance.com/api/"
 
-    def __init__(self, symbol: str, intervals: Tuple[str, ...]):
+    def __init__(self, symbol: str, intervals: Tuple[str, ...], limit=500):
         self.symbol = symbol
         self.intervals = intervals
         self.klines = Klines()
+        self.limit = limit
 
         # Проверка интервалов
         for interval in intervals:
             if interval not in self.klines.v_intervals:
                 raise ValueError(f"Недопустимый интервал: {interval}")
 
-    async def fetch_klines(self, session, interval, limit=500):
+    async def fetch_klines(self, session, interval):
         end_point = 'v3/klines'
         params = {"symbol": self.symbol,
                   "interval": interval,
-                  "limit": limit}
+                  "limit": self.limit}
         try:
             w_url = f"{self.BASE_URL}{end_point}"
             async with session.get(w_url, params=params) as response:
