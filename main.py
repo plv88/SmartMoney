@@ -25,7 +25,7 @@ async def main(is_first_run: bool):
             data_db.insert_data_from_dict(dict_result)
         else:
             bd_target.set_status('bad', dict_signal['id'])
-        print(f'{datetime.now(timezone.utc).strftime('%H:%M:%S.%f')[:-3]} Done {time.time() - time_start}')
+        print(f"{datetime.now(timezone.utc).strftime('%H:%M:%S.%f')[:-3]} Done {time.time() - time_start}")
 
 if __name__ == "__main__":
     asyncio.run(main(is_first_run=True))
