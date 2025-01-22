@@ -1,209 +1,149 @@
-# import mplfinance as mpf
-# import matplotlib.pyplot as plt
-# import pandas as pd
-# from app.core.DataHandler import DataHandler, Klines
-# from app.core.MarketStructureAnalyzer import MarketStructureAnalyzer
-# import asyncio
-# from datetime import datetime, timezone
-#
-#
-# def plot_candlestick_with_structure(df, start_time, end_time):
-#     # Create a copy and filter the data for the specified time range
-#     data = df.copy()
-#
-#     # Convert timestamps to datetime if they're not already
-#     if not isinstance(data.index, pd.DatetimeIndex):
-#         data.index = pd.to_datetime(data.index)
-#
-#     # Ensure the same timezone awareness
-#     if data.index.tz is None:
-#         data.index = data.index.tz_localize('UTC')
-#
-#     # Filter the data for the specified time range
-#     mask = (data.index >= start_time) & (data.index <= end_time)
-#     data = data.loc[mask]
-#
-#     # Create annotations list for structures
-#     annotations = []
-#     for idx, row in data.iterrows():
-#         if pd.notna(row['swing_type']):
-#             annotations.append(
-#                 dict(
-#                     x=idx,
-#                     y=row['High'],
-#                     text=str(row['swing_type']),
-#                     showarrow=True,
-#                     arrowhead=4,
-#                     arrowsize=1,
-#                     arrowwidth=2,
-#                     arrowcolor='gray'
-#                 )
-#             )
-#
-#     # Style settings
-#     mc = mpf.make_marketcolors(up='green',
-#                                down='red',
-#                                edge='inherit',
-#                                wick='inherit',
-#                                volume='in',
-#                                inherit=True)
-#
-#     style = mpf.make_mpf_style(marketcolors=mc)
-#
-#     # Create the chart
-#     fig, axlist = mpf.plot(data,
-#                            type='candle',
-#                            style=style,
-#                            title='SUIUSDT swing_type (Jan 9, 7:00-14:00)',
-#                            volume=False,
-#                            returnfig=True,
-#                            figratio=(15, 8),
-#                            figscale=1.5)
-#
-#     # Add annotations
-#     ax = axlist[0]
-#     for ann in annotations:
-#         ax.annotate(ann['text'],
-#                     xy=(data.index.get_loc(ann['x']), ann['y']),
-#                     xytext=(0, 15),
-#                     textcoords='offset points',
-#                     ha='center',
-#                     va='bottom',
-#                     fontsize=8,
-#                     arrowprops=dict(arrowstyle='->'))
-#
-#     plt.show()
-#     return fig
-#
-# async def main():
-#     symbol = "SUIUSDT"
-#     intervals = ("5m", "1h", "4h", "1d")
-#     intervals = ("5m",)
-#     handler = DataHandler(symbol, intervals)
-#     klines: Klines = await handler.get_ohlcv_data()
-#     MarketStructureAnalyzer(klines).analyze_multiple_timeframes()
-#     return klines
-#
-# # Execute main function
-# klines = asyncio.run(main())
-#
-# # Define the time range
-# start_time = pd.Timestamp('2025-01-08 22:00:00', tz=timezone.utc)
-# end_time = pd.Timestamp('2025-01-09 15:00:00', tz=timezone.utc)
-#
-# # Create and display the chart
-# fig = plot_candlestick_with_structure(klines._5m, start_time, end_time)
-# plt.show()
-
-import mplfinance as mpf
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import pandas as pd
+import numpy as np
 from app.core.DataHandler import DataHandler, Klines
 from app.core.MarketStructureAnalyzer import MarketStructureAnalyzer
+from app.core.LiquidityAnalyzer import LiquidityAnalyzer
 import asyncio
-from datetime import datetime, timezone
 
 
-def plot_candlestick_with_structure(df, start_time, end_time):
+def plot_candlestick_with_structure(df, start_time=None, end_time=None, show_plot=True):
     # Create a copy and filter the data for the specified time range
     data = df.copy()
 
-    # Convert timestamps to datetime if they're not already
+    # Конвертируем индекс в datetime если нужно
     if not isinstance(data.index, pd.DatetimeIndex):
-        data.index = pd.to_datetime(data.index)
-
-    # Ensure the same timezone awareness
-    if data.index.tz is None:
-        data.index = data.index.tz_localize('UTC')
+        if isinstance(data.index[0], (int, float)):
+            data.index = pd.to_datetime(data.index, unit='ms')
+        else:
+            data.index = pd.to_datetime(data.index)
 
     # Filter the data for the specified time range
-    mask = (data.index >= start_time) & (data.index <= end_time)
-    data = data.loc[mask]
+    if start_time is not None and end_time is not None:
+        if isinstance(start_time, str):
+            start_time = pd.to_datetime(start_time)
+        if isinstance(end_time, str):
+            end_time = pd.to_datetime(end_time)
+        mask = (data.index >= start_time) & (data.index <= end_time)
+        data = data.loc[mask]
 
-    # Create annotations list for structures
-    annotations = []
+    # Создаем фигуру
+    fig = go.Figure()
+
+    # Добавляем свечной график
+    fig.add_trace(
+        go.Candlestick(
+            x=data.index,
+            open=data['Open'],
+            high=data['High'],
+            low=data['Low'],
+            close=data['Close'],
+            name='OHLC'
+        )
+    )
+
+    # Добавляем структурные точки и линии
     for idx, row in data.iterrows():
         if pd.notna(row['swing_type']):
-            annotations.append(
-                dict(
-                    x=idx,
-                    y=row['High'],
-                    text=str(row['swing_type']),
-                    showarrow=True,
-                    arrowhead=4,
-                    arrowsize=1,
-                    arrowwidth=2,
-                    arrowcolor='gray'
-                )
+            # Добавляем аннотации для структурных точек
+            fig.add_annotation(
+                x=idx,
+                y=row['High'],
+                text=str(row['swing_type']),
+                showarrow=True,
+                arrowhead=2,
+                arrowsize=1,
+                arrowwidth=2,
+                arrowcolor='gray'
             )
 
-    # Style settings
-    mc = mpf.make_marketcolors(up='green',
-                               down='red',
-                               edge='inherit',
-                               wick='inherit',
-                               volume='in',
-                               inherit=True)
+            # Добавляем линии ликвидности
+            if row.get('has_bsl', False):
+                # Получаем все точки после текущей
+                mask = data.index >= idx
+                fig.add_trace(
+                    go.Scatter(
+                        x=data.index[mask],
+                        y=[row['High']] * mask.sum(),
+                        mode='lines',
+                        line=dict(color='blue', dash='dash'),
+                        name='BSL' if 'BSL' not in [trace.name for trace in fig.data] else None,
+                        showlegend='BSL' not in [trace.name for trace in fig.data]
+                    )
+                )
 
-    style = mpf.make_mpf_style(marketcolors=mc)
+            if row.get('has_ssl', False):
+                # Получаем все точки после текущей
+                mask = data.index >= idx
+                fig.add_trace(
+                    go.Scatter(
+                        x=data.index[mask],
+                        y=[row['Low']] * mask.sum(),
+                        mode='lines',
+                        line=dict(color='red', dash='dash'),
+                        name='SSL' if 'SSL' not in [trace.name for trace in fig.data] else None,
+                        showlegend='SSL' not in [trace.name for trace in fig.data]
+                    )
+                )
 
-    # Create the chart
-    fig, axlist = mpf.plot(data,
-                           type='candle',
-                           style=style,
-                           title='SUIUSDT swing_type (Jan 9, 7:00-14:00)',
-                           volume=False,
-                           returnfig=True,
-                           figratio=(15, 8),
-                           figscale=1.5)
+    # Настраиваем внешний вид
+    fig.update_layout(
+        title='SUIUSDT swing_type with Liquidity Levels',
+        yaxis_title='Price',
+        xaxis_title='Time',
+        template='plotly_white',
+        xaxis_rangeslider_visible=False,  # Отключаем ползунок внизу
+        height=800,  # Увеличиваем высоту графика
+        margin=dict(t=30, l=10, r=10, b=10)  # Уменьшаем отступы
+    )
 
-    # Add annotations
-    ax = axlist[0]
-    for ann in annotations:
-        ax.annotate(ann['text'],
-                    xy=(data.index.get_loc(ann['x']), ann['y']),
-                    xytext=(0, 15),
-                    textcoords='offset points',
-                    ha='center',
-                    va='bottom',
-                    fontsize=8,
-                    arrowprops=dict(arrowstyle='->'))
+    # Настраиваем оси
+    fig.update_xaxes(
+        rangeslider_visible=False,
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='lightgrey',
+        showline=True,
+        linewidth=1,
+        linecolor='black'
+    )
 
-    # Add grid and time labels
-    ax.grid(True, linestyle='--', alpha=0.5)  # Add grid with dashed lines
-    ax.set_xlabel('Time')  # Set label for x-axis
-    ax.set_ylabel('Price')  # Set label for y-axis
+    fig.update_yaxes(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='lightgrey',
+        showline=True,
+        linewidth=1,
+        linecolor='black',
+        side='right'  # Размещаем ось Y справа
+    )
 
-    # Adjust x-axis ticks
-    ax.xaxis.set_major_locator(plt.MaxNLocator(10))  # Set maximum number of ticks
-    ax.xaxis.set_minor_locator(plt.MaxNLocator(50))  # Optional: minor ticks
+    if show_plot:
+        fig.show()
 
-    # Rotate x-axis labels for better readability
-    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
-
-    plt.show()
     return fig
 
 
 async def main():
     symbol = "SUIUSDT"
-    intervals = ("1m", "5m", "1h", "4h", "1d")
+    intervals = ("5m", "1h", "4h", '1d')
     # intervals = ()
-    handler = DataHandler(symbol, intervals, limit=1000)
+    handler = DataHandler(symbol, intervals, limit=500)
     klines: Klines = await handler.get_ohlcv_data()
-    MarketStructureAnalyzer(klines).analyze_multiple_timeframes()
-    return klines
+    df_m = MarketStructureAnalyzer(klines._1h).main()
+    df_l = LiquidityAnalyzer(df_m).main()
+
+    return df_l
 
 # Execute main function
 klines = asyncio.run(main())
 
-# Define the time range
-start_time = pd.Timestamp('2025-01-11 06:00:00', tz=timezone.utc)
-end_time = pd.Timestamp('2025-01-11 20:00:00', tz=timezone.utc)
+
 
 # Create and display the chart
-fig = plot_candlestick_with_structure(klines._1m, start_time, end_time)
-plt.show()
-start_time = pd.Timestamp('2025-01-11 03:00:00', tz=timezone.utc)
-fig = plot_candlestick_with_structure(klines._5m, start_time, end_time)
-plt.show()
+# fig = plot_candlestick_with_structure(klines, start_time, end_time)
+fig = plot_candlestick_with_structure(klines)
+# start_time = pd.Timestamp('2025-01-15 03:00:00', tz=timezone.utc)
+# fig = plot_candlestick_with_structure(klines, start_time, end_time)
+# plt.show()

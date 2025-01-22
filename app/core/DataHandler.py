@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import datetime
 from typing import Tuple, Optional, ClassVar
 from dataclasses import dataclass, field
+from PlvLogger import Logger
 
 
 @dataclass
@@ -33,37 +34,104 @@ class Klines:
 
 
 class DataHandler:
-    BASE_URL = "https://api.binance.com/api/"
+    BASE_URL = "https://fapi.binance.com"
 
-    def __init__(self, symbol: str, intervals: Tuple[str, ...], limit=500):
+    def __init__(self, symbol: str, intervals: Tuple[str, ...], limit, end_time=None):
         self.symbol = symbol
         self.intervals = intervals
         self.klines = Klines()
         self.limit = limit
-
+        self.end_time = end_time
+        self.btc_task = None
+        self.df_btc = None
+        self.logger = Logger('DataHandler', type_log='d').logger
         # Проверка интервалов
         for interval in intervals:
             if interval not in self.klines.v_intervals:
+                self.logger.error(f"Недопустимый интервал: {interval}")
                 raise ValueError(f"Недопустимый интервал: {interval}")
 
-    async def fetch_klines(self, session, interval):
-        end_point = 'v3/klines'
-        params = {"symbol": self.symbol,
-                  "interval": interval,
-                  "limit": self.limit}
-        try:
-            w_url = f"{self.BASE_URL}{end_point}"
-            async with session.get(w_url, params=params) as response:
-                response.raise_for_status()
-                return interval, await response.json()
-        except Exception as e:
-            print(f"Ошибка при запросе данных для {interval}: {e}")
+    # async def fetch_klines(self, session, w_symbol, interval, limit, retries=3, backoff=1):
+    #     end_point = '/fapi/v1/klines'
+    #     params = {"symbol": w_symbol, "interval": interval, "limit": limit}
+    #     if self.end_time:
+    #         params["endTime"] = self.end_time
+    #
+    #     for attempt in range(1, retries + 1):
+    #         try:
+    #             w_url = f"{self.BASE_URL}{end_point}"
+    #             async with session.get(w_url, params=params) as response:
+    #                 response.raise_for_status()
+    #                 return interval, await response.json()
+    #         except aiohttp.ClientError as e:
+    #             self.logger.warning(f"Attempt {attempt}/{retries}: ClientError for {w_symbol}-{interval}: {e}")
+    #         except Exception as e:
+    #             self.logger.error(f"Attempt {attempt}/{retries}: Unexpected error for {w_symbol}-{interval}: {e}")
+    #
+    #         if attempt < retries:
+    #             await asyncio.sleep(backoff)
+    #             backoff *= 2  # Удваиваем время ожидания
+    #     self.logger.error(f"Failed to fetch data for {w_symbol}-{interval} after {retries} attempts.")
+    #     return interval, None
+
+    async def fetch_klines(self, session, w_symbol, interval, limit, retries=3, backoff=1):
+        if session.closed:
+            self.logger.error(f"Session closed for {w_symbol}-{interval}")
             return interval, None
 
+        for attempt in range(1, retries + 1):
+            try:
+                _params = {"symbol": w_symbol, "interval": interval, "limit": limit}
+                if self.end_time:
+                    _params["endTime"] = self.end_time
+                async with session.get(f"{self.BASE_URL}/fapi/v1/klines",
+                                       params=_params,
+                                       timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    if response.status == 200:
+                        return interval, await response.json()
+                    self.logger.error(f"HTTP {response.status} for {w_symbol}-{interval}")
+
+            except asyncio.TimeoutError:
+                self.logger.warning(f"Timeout for {w_symbol}-{interval}")
+            except aiohttp.ClientError as e:
+                self.logger.warning(f"ClientError attempt {attempt}/{retries}: {e}")
+            except Exception as e:
+                self.logger.error(f"Unexpected error attempt {attempt}/{retries}: {e}")
+
+            await asyncio.sleep(backoff * attempt)
+
+        return interval, None
+
+    # async def fetch_all_intervals(self):
+    #     try:
+    #         async with aiohttp.ClientSession() as session:
+    #             self.btc_task = asyncio.create_task(self.fetch_klines(session=session, w_symbol="BTCUSDT", interval="1h", limit=100))
+    #             tasks = [self.fetch_klines(session=session, w_symbol=self.symbol, interval=intr, limit=self.limit)
+    #                      for intr in self.intervals]
+    #             result = await asyncio.gather(*tasks)
+    #             return result
+    #     except Exception as e:
+    #         self.logger.error(f"fetch_all_intervals Error: {e}")
+
     async def fetch_all_intervals(self):
-        async with aiohttp.ClientSession() as session:
-            tasks = [self.fetch_klines(session, interval) for interval in self.intervals]
-            return await asyncio.gather(*tasks)
+        try:
+            connector = aiohttp.TCPConnector(force_close=True)
+            tasks = []
+            async with aiohttp.ClientSession(connector=connector) as session:
+                # Create BTC task first self, session, w_symbol, interval, limit, retries=3, backoff=1
+                tasks.append(asyncio.create_task(self.fetch_klines(session=session,
+                                                                   w_symbol="BTCUSDT",
+                                                                   interval="1h",
+                                                                   limit=100)))
+                # Add other tasks
+                tasks.extend([asyncio.create_task(self.fetch_klines(session=session,
+                                                                    w_symbol=self.symbol,
+                                                                    interval=intr,
+                                                                    limit=self.limit)) for intr in self.intervals])
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                return results
+        except Exception as e:
+            self.logger.error(f"fetch_all_intervals Error: {e}")
 
     @staticmethod
     def prepare_dataframe(klines):
@@ -84,26 +152,22 @@ class DataHandler:
 
         return df
 
-    async def get_ohlcv_data(self) -> Klines:
+    async def get_ohlcv_data(self):
         results = await self.fetch_all_intervals()
+        if not results:
+            return
 
-        for interval, klines_data in results:
+        for interval, klines_data in results[1:]:
             if klines_data:
                 df = self.prepare_dataframe(klines_data)
                 if hasattr(self.klines, f"_{interval}"):
                     setattr(self.klines, f"_{interval}", df)
                 else:
-                    raise ValueError(f"Таймфрейм {interval} не поддерживается.")
+                    self.logger.warning(f"get_ohlcv_data таймфрейм {interval} не поддерживается.")
+                    return
+        try:
+            self.df_btc = self.prepare_dataframe(results[0][1])
+        except Exception as e:
+            self.logger.error(f"get_ohlcv_data BTC Error: {e}")
+            return
         return self.klines
-
-    def add_calculated_columns(self, new_data):
-        """Добавление расчетных колонок в данные"""
-        pass
-
-    def normalize_distances(self, high, low, distances):
-        """Нормализация расстояний в процентах"""
-        # range_ = high - low
-        # return [dist / range_ * 100 for dist in distances]
-        pass
-
-
