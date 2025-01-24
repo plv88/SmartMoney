@@ -23,7 +23,10 @@ pip install -r requirements.txt
 - Supported intervals include `1m`, `5m`, `15m`, `1h`, `4h`, `1d`, etc.
 
 ### 3. Run the Analysis
-Use the `debug.py` script as an entry point:
+Use the `debug.py` or `main.py` script as an entry point:
+```bash
+python main.py
+```
 ```bash
 python debug.py
 ```
@@ -43,7 +46,7 @@ The system outputs enriched DataFrames with key metrics such as:
 For advanced predictions, integrate machine learning models using the enriched features. Historical data can be processed to train and fine-tune models for predicting optimal trades.
 
 ## Example Workflow
-- Define the trading symbol and intervals in `debug.py`:
+- Define the trading symbol and intervals:
   ```python
   symbol = "BTCUSDT"
   intervals = ("5m", "1h", "4h", "1d")
